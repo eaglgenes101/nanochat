@@ -40,7 +40,8 @@ python_functions = ["test_*"]
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "gpu" },
+    { index = "pytorch-cu128", extra = "cuda" },
+    { index = "pytorch-cu128", extra = "gpu" },  # gpu is an alias for cuda
     { index = "pytorch-rocm64", extra = "rocm" },
 ]
 
@@ -67,9 +68,12 @@ explicit = true
 cpu = [
     "torch==2.9.1",
 ]
-gpu = [
-    "torch==2.9.1",
+cuda = [
+    "torch>=2.9.1",
 ]
+gpu = [
+    "torch>=2.9.1",
+]  # gpu is an alias for cuda (backward compatibility)
 rocm = [
     "torch>=2.9.1",
     "pytorch-triton-rocm>=3.5.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -81,6 +85,7 @@ default-groups = []
 conflicts = [
     [
         { extra = "cpu" },
+        { extra = "cuda" },
         { extra = "gpu" },
         { extra = "rocm" },
     ],
