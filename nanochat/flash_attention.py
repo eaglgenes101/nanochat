@@ -2,7 +2,7 @@
 Unified Flash Attention interface with automatic FA3/SDPA switching.
 
 Exports `flash_attn` module that matches the FA3 API exactly, but falls back
-to PyTorch SDPA on non-Hopper GPUs (including Blackwell), MPS, and CPU.
+to PyTorch SDPA on incompatible CUDA GPUs, MPS, and CPU.
 
 Usage (drop-in replacement for FA3):
     from nanochat.flash_attention import flash_attn
