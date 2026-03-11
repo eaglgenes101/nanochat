@@ -28,10 +28,10 @@ def _load_flash_attention_3():
         # FA3 kernels are currently compiled for Hopper (sm90), Ada (sm89) and Ampere (sm80/sm86)
         # Blackwell (sm100) needs SDPA fallback until FA3 is recompiled or FA4 is released
         # varunneal kernel obtains better results for H100/Hopper
-        hf_kernel = "varunneal/flash-attention-3" if major == 9 else "kernels-community/flash-attn3"
-        from kernels import get_kernel
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        from kernels import get_kernel
+        hf_kernel = "varunneal/flash-attention-3" if major == 9 else "kernels-community/flash-attn3"
         return get_kernel(hf_kernel).flash_attn_interface
     except Exception:
         return None
