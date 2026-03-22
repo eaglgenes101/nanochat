@@ -42,7 +42,7 @@ _fa3 = _load_flash_attention_3()
 HAS_FA3 = _fa3 is not None
 
 # Override for testing: set to 'fa3', 'sdpa', or None (auto)
-_override_impl = None
+_override_impl = 'sdpa'
 
 
 def _resolve_use_fa3():
@@ -178,7 +178,7 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
 
 def default_window_pattern():
     # FA3 has native support for window pattern otherwise there is none and it's slow -> fallback to just L
-    return "SSSL" if _use_fa3() else "L"
+    return "SSSL" if _resolve_use_fa3() else "L"
 
 # =============================================================================
 # Export: flash_attn module interface (drop-in replacement for FA3)

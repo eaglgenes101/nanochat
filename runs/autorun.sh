@@ -14,6 +14,8 @@
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export CUDA_VISIBLE_DEVICES="0"
+export ROCR_VISIBLE_DEVICES="0"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
@@ -107,7 +109,7 @@ wait $DATASET_DOWNLOAD_PID
 # Set optimal environment variables based on detected PyTorch flavour
 set_backend_env_vars "$TORCH_FLAVOUR"
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=20 --target-param-data-ratio=20 --run=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=12 --target-param-data-ratio=8 --device-batch-size=2 --fp8 --run=$WANDB_RUN --max-seq-len=1024
 # evaluate the model on a larger chunk of train/val data and draw some samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks

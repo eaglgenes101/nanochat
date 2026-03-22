@@ -13,6 +13,8 @@
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
+export CUDA_VISIBLE_DEVICES="0"
+export ROCR_VISIBLE_DEVICES="0"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
