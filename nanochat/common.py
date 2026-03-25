@@ -188,6 +188,8 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     # skipping full reproducibility for now, possibly investigate slowdown later
     # torch.use_deterministic_algorithms(True)
 
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+
     # Precision
     if device_type == "cuda":
         torch.set_float32_matmul_precision("high") # uses tf32 instead of fp32 for matmuls, see https://docs.pytorch.org/docs/stable/generated/torch.set_float32_matmul_precision.html

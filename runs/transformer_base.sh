@@ -105,11 +105,11 @@ python -m scripts.tok_eval
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
 
-# pretrain the d13 model
+# pretrain the d12 model
 # Set optimal environment variables based on detected PyTorch flavour
 set_backend_env_vars "$TORCH_FLAVOUR"
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=12 --target-param-data-ratio=20 --device-batch-size=4 --fp8 --run=$WANDB_RUN --max-seq-len=2048
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=12 --target-param-data-ratio=20 --device-batch-size=1 --run=$WANDB_RUN --max-seq-len=1024 --eval-every=10
 # evaluate the model on a larger chunk of train/val data and draw some samples
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks

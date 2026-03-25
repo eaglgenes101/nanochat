@@ -16,7 +16,6 @@ Usage (drop-in replacement for FA3):
 import torch
 import torch.nn.functional as F
 
-
 # =============================================================================
 # Detection: Try to load FA3 on Hopper+ GPUs
 # =============================================================================
@@ -42,7 +41,7 @@ _fa3 = _load_flash_attention_3()
 HAS_FA3 = _fa3 is not None
 
 # Override for testing: set to 'fa3', 'sdpa', or None (auto)
-_override_impl = 'sdpa'
+_override_impl = None
 
 
 def _resolve_use_fa3():

@@ -41,10 +41,11 @@ set_backend_env_vars() {
     
     if [ "$torch_flavour" = "rocm" ]; then
         echo "Setting ROCm-optimized environment variables..."
-        export FLASH_ATTENTION_TRITON_AMD_ENABLE="FALSE"
+        export FLASH_ATTENTION_TRITON_AMD_ENABLE="TRUE"
         export USE_ROCM_CK_SDPA=1
         export USE_ROCM_CK_GEMM=1
         export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+        export TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
         # ROCm-specific optimizations
         export HIP_LAUNCH_BLOCKING=0
     elif [ "$torch_flavour" = "cuda" ]; then

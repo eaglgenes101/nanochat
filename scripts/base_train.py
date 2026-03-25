@@ -243,7 +243,7 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False) # the inputs to model will never change shape so dynamic=False is safe
+model = torch.compile(model, dynamic=False, mode="reduce-overhead") # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -590,8 +590,10 @@ while True:
         gc.collect() # manually collect a lot of garbage from setup
         gc.freeze() # immediately freeze all currently surviving objects and exclude them from GC
         gc.disable() # nuclear intervention here: disable GC entirely except:
-    elif step % 5000 == 0: # every 5000 steps...
+    #elif step % 5000 == 0: # every 5000 steps...
+    elif step % 10 == 0:
         gc.collect() # manually collect, just to be safe for very, very long runs
+        torch.accelerator.memory.empty_cache()
 
 # print a few more stats
 print0(f"Peak memory usage: {get_max_memory() / 1024 / 1024:.2f}MiB")

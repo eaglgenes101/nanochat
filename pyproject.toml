@@ -3,7 +3,7 @@ name = "nanochat"
 version = "0.1.0"
 description = "the minimal full-stack ChatGPT clone"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.14"
 dependencies = [
     "datasets>=4.0.0",
     "fastapi>=0.117.1",
@@ -12,7 +12,7 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.10.0",
+    "torch>=2.11.0",
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
@@ -42,24 +42,24 @@ torch = [
     { index = "pytorch-cpu", extra = "cpu" },
     { index = "pytorch-cu128", extra = "cuda" },
     { index = "pytorch-cu128", extra = "gpu" },   # gpu is an alias for cuda
-    { index = "pytorch-rocm70", extra = "rocm" },
+    { index = "pytorch-rocm72", extra = "rocm" },
 ]
 
 pytorch-triton-rocm = [
-    { index = "pytorch-nightly-rocm70", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-nightly-rocm72", extra = "rocm", marker = "sys_platform == 'linux'" },
 ]
 triton-rocm = [
-    { index = "pytorch-nightly-rocm70", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-nightly-rocm72", extra = "rocm", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]
-name = "pytorch-rocm70"
-url = "https://download.pytorch.org/whl/rocm7.0"
+name = "pytorch-rocm72"
+url = "https://download.pytorch.org/whl/rocm7.2"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-nightly-rocm70"
-url = "https://download.pytorch.org/whl/nightly/rocm7.0"
+name = "pytorch-nightly-rocm72"
+url = "https://download.pytorch.org/whl/nightly/rocm7.2"
 explicit = true
 
 [[tool.uv.index]]
@@ -73,13 +73,13 @@ url = "https://download.pytorch.org/whl/cu128"
 explicit = true
 
 [project.optional-dependencies]
-cpu = ["torch==2.10.0"]
-cuda = ["torch>=2.10.0"]
-gpu = ["torch>=2.10.0"] # gpu is an alias for cuda (backward compatibility)
+cpu = ["torch>=2.11.0"]
+cuda = ["torch>=2.11.0"]
+gpu = ["torch>=2.11.0"] # gpu is an alias for cuda (backward compatibility)
 rocm = [
-    "torch>=2.10.0",
-    "pytorch-triton-rocm>=3.5.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "triton-rocm>=3.5.1; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torch>=2.11.0",
+    "pytorch-triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
 [tool.uv]
@@ -92,4 +92,3 @@ conflicts = [
         { extra = "rocm" },
     ],
 ]
-index-strategy = "unsafe-best-match"
