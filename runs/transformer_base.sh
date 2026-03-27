@@ -84,11 +84,11 @@ python -m nanochat.report reset
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
-# See comment below for why 154 is the right number here
-python -m nanochat.dataset -n 154 &
+# See comment below for why 308 is the right number here
+python -m nanochat.dataset -n 308 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max-chars=2000000000 --vocab-size=8192 #--vocab-size=65536
+python -m scripts.tok_train --max-chars=2000000000 --vocab-size=65536
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
@@ -110,8 +110,8 @@ wait $DATASET_DOWNLOAD_PID
 # Set optimal environment variables based on detected PyTorch flavour
 set_backend_env_vars "$TORCH_FLAVOUR"
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=8 --target-param-data-ratio=20 --device-batch-size=32 --run=$WANDB_RUN \
-    --max-seq-len=512 --eval-tokens=524288 --warmup-steps=200 --save-every=100 --eval-every=100 --resume-from-step=600
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=16 --target-param-data-ratio=20 --device-batch-size=32 --run=$WANDB_RUN \
+    --max-seq-len=512 --eval-tokens=524288 --warmup-steps=200 --save-every=100 --eval-every=100
 #--eval-tokens=524288
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks

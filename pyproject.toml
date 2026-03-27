@@ -40,8 +40,8 @@ python_functions = ["test_*"]
 [tool.uv.sources]
 torch = [
     { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "cuda" },
-    { index = "pytorch-cu128", extra = "gpu" },   # gpu is an alias for cuda
+    { index = "pytorch-cu130", extra = "cuda" },
+    { index = "pytorch-cu130", extra = "gpu" },   # gpu is an alias for cuda
     { index = "pytorch-rocm72", extra = "rocm" },
 ]
 
@@ -69,7 +69,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [project.optional-dependencies]
