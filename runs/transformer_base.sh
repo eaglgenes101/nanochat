@@ -16,6 +16,7 @@ export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
 export CUDA_VISIBLE_DEVICES="0"
 export ROCR_VISIBLE_DEVICES="0"
+export WANDB_RUN="transformer_8layer_4096token"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
@@ -83,24 +84,24 @@ python -m nanochat.report reset
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
-# See comment below for why 308 is the right number here
-python -m nanochat.dataset -n 308 &
+# See comment below for why 154 is the right number here
+python -m nanochat.dataset -n 154 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
-python -m scripts.tok_train --max-chars=2000000000 --vocab-size=65536
+python -m scripts.tok_train --max-chars=2000000000 --vocab-size=8192 #--vocab-size=65536
 # evaluate the tokenizer (report compression ratio etc.)
 python -m scripts.tok_eval
 
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
 
-# The d12 model is 471M parameters.
-# Chinchilla says #tokens = 20X #params, so we need 471e6 * 20 = 9.42B tokens.
-# Assume our tokenizer is 4.8 chars/token, this is 9.42B * 4.8 ~= 45B chars.
-# At 250M chars/shard, this is 45B / 250M ~= 180 shards needed for pretraining.
-# Round up to 200 for safety. Also, the new DataLoader wastes about 35% of tokens to cropping
-# so 200 / (1 - 0.35) = 308 shards are needed.
-# At ~100MB/shard, this downloads ~30.8GB of data to disk.
+# The d12 model is 226M parameters.
+# Chinchilla says #tokens = 20X #params, so we need 471e6 * 20 = 4.52B tokens.
+# Assume our tokenizer is 4.8 chars/token, this is 4.52B * 4.8 ~= 21.7B chars.
+# At 250M chars/shard, this is 21.7B / 250M ~= 87 shards needed for pretraining.
+# Round up to 100 for safety. Also, the new DataLoader wastes about 35% of tokens to cropping
+# so 100 / (1 - 0.35) = 154 shards are needed.
+# At ~100MB/shard, this downloads ~15.4GB of data to disk.
 # (The total number of shards available in the entire dataset is 1822.)
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
@@ -109,8 +110,9 @@ wait $DATASET_DOWNLOAD_PID
 # Set optimal environment variables based on detected PyTorch flavour
 set_backend_env_vars "$TORCH_FLAVOUR"
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=12 --target-param-data-ratio=20 --device-batch-size=1 --run=$WANDB_RUN --max-seq-len=1024 --eval-every=10
-# evaluate the model on a larger chunk of train/val data and draw some samples
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=8 --target-param-data-ratio=20 --device-batch-size=32 --run=$WANDB_RUN \
+    --max-seq-len=512 --eval-tokens=524288 --warmup-steps=200 --save-every=100 --eval-every=100 --resume-from-step=600
+#--eval-tokens=524288
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_loss
 # evaluate the model on CORE tasks
 torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
@@ -120,18 +122,18 @@ torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval
 
 # download 2.3MB of synthetic identity conversations to impart a personality to nanochat
 # see dev/gen_synthetic_data.py for details on how this data was prepared and to get a sense of how you can easily tune it
-curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
+#curl -L -o $NANOCHAT_BASE_DIR/identity_conversations.jsonl https://karpathy-public.s3.us-west-2.amazonaws.com/identity_conversations.jsonl
 
 # run midtraining and eval the model
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
+#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.mid_train -- --run=$WANDB_RUN
+#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i mid
 
 # -----------------------------------------------------------------------------
 # Supervised Finetuning (domain adaptation to each sequence all by itself per row)
 
 # train sft and re-eval right away (should see a small bump)
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --run=$WANDB_RUN
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
+#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_sft -- --run=$WANDB_RUN
+#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.chat_eval -- -i sft
 
 # chat with the model over CLI! Leave out the -p to chat interactively
 # python -m scripts.chat_cli -p "Why is the sky blue?"

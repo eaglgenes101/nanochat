@@ -36,6 +36,7 @@ from nanochat.flash_attention import HAS_FA3, default_window_pattern
 from scripts.base_eval import evaluate_core
 print_banner()
 
+#torch.autograd.set_detect_anomaly(True, check_nan=True)
 # -----------------------------------------------------------------------------
 # CLI arguments
 parser = argparse.ArgumentParser(description="Pretrain base model")
@@ -241,7 +242,7 @@ def disable_fp8(model):
 # Compile the model
 
 orig_model = model # original, uncompiled model, for saving raw model state_dict and for inference/evaluation (because the shapes may change shape)
-model = torch.compile(model, dynamic=False, mode="reduce-overhead") # the inputs to model will never change shape so dynamic=False is safe
+model = torch.compile(model, dynamic=False, disable=True) # the inputs to model will never change shape so dynamic=False is safe
 
 # -----------------------------------------------------------------------------
 # Scaling laws and muP extrapolations to determine the optimal training horizon, batch size, learning rates, weight decay.
@@ -312,6 +313,22 @@ optimizer = model.setup_optimizer(
     matrix_lr=args.matrix_lr * batch_lr_scale,
     weight_decay=weight_decay_scaled,
 )
+
+def check_value_embeds(opt, args, kwargs):
+    for ve in model.value_embeds.values():
+        if not ve.weight.isfinite().all():
+            print0(f"Replacing {ve.weight.isinf().count_nonzero()} inf and {ve.weight.isnan().count_nonzero()} NaN values")
+            ve.weight = torch.nn.Parameter(ve.weight.nan_to_num())
+
+optimizer.register_step_post_hook(check_value_embeds)
+
+#def check_value_embed_grads(opt, args, kwargs):
+#    for ve in model.value_embeds.values():
+#        if ve.weight.grad is not None and not ve.weight.grad.isfinite().all():
+#            print0(f"Replacing {ve.weight.grad.isinf().count_nonzero()} inf and {ve.weight.grad.isnan().count_nonzero()} NaN grads")
+#            ve.weight.grad = torch.nn.Parameter(ve.weight.grad.nan_to_num())
+#
+#optimizer.register_step_pre_hook(check_value_embed_grads)
 
 if resuming:
     optimizer.load_state_dict(optimizer_data)
@@ -531,9 +548,11 @@ while True:
         if is_ddp_initialized():
             for v in scaler._found_inf_per_device(optimizer).values():
                 dist.all_reduce(v, op=dist.ReduceOp.MAX)
+        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
         scaler.step(optimizer)
         scaler.update()
     else:
+        torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)
         optimizer.step()
     model.zero_grad(set_to_none=True)
     train_loss_f = train_loss.item() # .item() is a CPU-GPU sync point
@@ -587,7 +606,7 @@ while True:
     if first_step_of_run:
         gc.collect() # manually collect a lot of garbage from setup
         gc.freeze() # immediately freeze all currently surviving objects and exclude them from GC
-        gc.disable() # nuclear intervention here: disable GC entirely except:
+        #gc.disable() # nuclear intervention here: disable GC entirely except:
     #elif step % 5000 == 0: # every 5000 steps...
     elif step % 10 == 0:
         gc.collect() # manually collect, just to be safe for very, very long runs

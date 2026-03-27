@@ -44,7 +44,7 @@ class GPTConfig:
 
 
 def norm(x):
-    return F.rms_norm(x, (x.size(-1),)) # note that this will run in bf16, seems ok
+    return F.rms_norm(x, (x.size(-1),), eps=1e-6) # note that this will run in bf16, seems ok
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
@@ -58,13 +58,15 @@ def has_ve(layer_idx, n_layer):
     """Returns True if GPT layer should have Value Embedding (alternating, last layer always included)."""
     return layer_idx % 2 == (n_layer - 1) % 2
 
-#def apply_rotary_emb(x, cos, sin):
-#    assert x.ndim == 4  # multihead attention
-#    d = x.shape[3] // 2
-#    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
-#    y1 = x1 * cos + x2 * sin # rotate pairs of dims
-#    y2 = x1 * (-sin) + x2 * cos
-#    return torch.cat([y1, y2], 3)
+'''
+def apply_rotary_emb(x, cos, sin):
+    assert x.ndim == 4  # multihead attention
+    d = x.shape[3] // 2
+    x1, x2 = x[..., :d], x[..., d:] # split up last dim into two halves
+    y1 = x1 * cos + x2 * sin # rotate pairs of dims
+    y2 = x1 * (-sin) + x2 * cos
+    return torch.cat([y1, y2], 3)
+'''
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, layer_idx):
@@ -85,7 +87,9 @@ class CausalSelfAttention(nn.Module):
         self.norm = RMSNorm(1, elementwise_affine=False)
 
     def forward(self, x, ve, rotary_embed, window_size, kv_cache):
+    #def forward(self, x, ve, cos_sin, window_size, kv_cache):
         B, T, C = x.size()
+        t_offset = 0 if kv_cache is None else kv_cache.get_pos()
 
         # Project the input to get queries, keys, and values
         # Shape: (B, T, H, D) - FA3's native layout, no transpose needed!
@@ -101,8 +105,9 @@ class CausalSelfAttention(nn.Module):
 
         # Apply Rotary Embeddings to queries and keys to get relative positional encoding
         #cos, sin = cos_sin
-        q, k = rotary_embed(q, k) #apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin)
-        q, k = self.norm(q), self.norm(k) # QK norm
+        #q, k = apply_rotary_emb(q, cos, sin), apply_rotary_emb(k, cos, sin) 
+        q, k = rotary_embed(q, k, seqlen_offset=t_offset)
+        q, k = norm(q), norm(k) # QK norm
         q = q * 1.2  # sharper attention (split scale between Q and K), TODO think through better
         k = k * 1.2
 
@@ -141,6 +146,7 @@ class MLP(nn.Module):
         x = self.c_fc(x)
         x = sqrelu(x)
         x = self.c_proj(x)
+        torch.cuda.synchronize(device=None)
         return x
 
 
@@ -152,8 +158,10 @@ class Block(nn.Module):
         self.norm = RMSNorm(1, elementwise_affine=False)
 
     def forward(self, x, ve, rotary_embed, window_size, kv_cache):
-        x = x + self.attn(self.norm(x), ve, rotary_embed, window_size, kv_cache)
-        x = x + self.mlp(self.norm(x))
+    #def forward(self, x, ve, cos_sin, window_size, kv_cache):
+        x = x + self.attn(norm(x), ve, rotary_embed, window_size, kv_cache)
+        #x = x + self.attn(norm(x), ve, cos_sin, window_size, kv_cache)
+        x = x + self.mlp(norm(x))
         return x
 
 
@@ -200,13 +208,13 @@ class GPT(nn.Module):
         # In the future we can dynamically grow the cache, for now it's fine.
         self.rotary_seq_len = config.sequence_len * 10 # 10X over-compute should be enough, TODO make nicer?
         head_dim = config.n_embd // config.n_head
-        self.rotary_embed = RotaryEmbedding(
+        self.rotary_embed = torch.nn.utils.init.skip_init(
+            RotaryEmbedding,
             dim = head_dim,
-            base = config.sequence_len, 
+            base = 2 ** 18, 
             scale_base = 512,
-            pos_idx_in_fp32 = True if COMPUTE_DTYPE == torch.float32 else False
+            pos_idx_in_fp32 = True, 
         )
-        self.norm = RMSNorm(1, elementwise_affine=False)
         #cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         #self.register_buffer("cos", cos, persistent=False) # persistent=False means it's not saved to the checkpoint
         #self.register_buffer("sin", sin, persistent=False)
@@ -229,7 +237,8 @@ class GPT(nn.Module):
 
         # Embedding and unembedding
         torch.nn.init.normal_(self.transformer.wte.weight, mean=0.0, std=0.8)
-        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.001)
+        # This reduces the number of NaN values for some reason
+        torch.nn.init.normal_(self.lm_head.weight, mean=0.0, std=0.12)
 
         # Transformer blocks: uniform init with bound = sqrt(3) * std (same standard deviation as normal)
         n_embd = self.config.n_embd
@@ -261,9 +270,17 @@ class GPT(nn.Module):
                 torch.nn.init.uniform_(block.attn.ve_gate.weight, 0.0, 0.02)
 
         # Rotary embeddings
-        #head_dim = self.config.n_embd // self.config.n_head
+        head_dim = self.config.n_embd // self.config.n_head
         #cos, sin = self._precompute_rotary_embeddings(self.rotary_seq_len, head_dim)
         #self.cos, self.sin = cos, sin
+
+        self.rotary_embed = RotaryEmbedding(
+            dim = head_dim,
+            base = 2 ** 18, 
+            scale_base = 512,
+            pos_idx_in_fp32 = True, 
+            device = self.lm_head.weight.device,
+        )
 
         # Cast embeddings to COMPUTE_DTYPE: optimizer can tolerate reduced-precision
         # embeddings and it saves memory. Exception: fp16 requires fp32 embeddings
@@ -273,22 +290,24 @@ class GPT(nn.Module):
             for ve in self.value_embeds.values():
                 ve.to(dtype=COMPUTE_DTYPE)
 
-    #def _precompute_rotary_embeddings(self, seq_len, head_dim, base=100000, device=None):
-    #    # TODO: bump base theta more? e.g. 100K is more common more recently
-    #    # autodetect the device from model embeddings
-    #    if device is None:
-    #        device = self.transformer.wte.weight.device
-    #    # stride the channels
-    #    channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
-    #    inv_freq = 1.0 / (base ** (channel_range / head_dim))
-    #    # stride the time steps
-    #    t = torch.arange(seq_len, dtype=torch.float32, device=device)
-    #    # calculate the rotation frequencies at each (time, channel) pair
-    #    freqs = torch.outer(t, inv_freq)
-    #    cos, sin = freqs.cos(), freqs.sin()
-    #    cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
-    #    cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
-    #    return cos, sin
+    '''
+    def _precompute_rotary_embeddings(self, seq_len, head_dim, base=100000, device=None):
+        # TODO: bump base theta more? e.g. 100K is more common more recently
+        # autodetect the device from model embeddings
+        if device is None:
+            device = self.transformer.wte.weight.device
+        # stride the channels
+        channel_range = torch.arange(0, head_dim, 2, dtype=torch.float32, device=device)
+        inv_freq = 1.0 / (base ** (channel_range / head_dim))
+        # stride the time steps
+        t = torch.arange(seq_len, dtype=torch.float32, device=device)
+        # calculate the rotation frequencies at each (time, channel) pair
+        freqs = torch.outer(t, inv_freq)
+        cos, sin = freqs.cos(), freqs.sin()
+        cos, sin = cos.to(COMPUTE_DTYPE), sin.to(COMPUTE_DTYPE)
+        cos, sin = cos[None, :, None, :], sin[None, :, None, :] # add batch and head dims for later broadcasting
+        return cos, sin
+    '''
 
     def _compute_window_sizes(self, config):
         """
@@ -435,7 +454,7 @@ class GPT(nn.Module):
         # Embed the tokens
         x = self.transformer.wte(idx) # embed current token
         x = x.to(COMPUTE_DTYPE) # ensure activations are in compute dtype (no-op usually, but active for fp16 code path)
-        x = self.norm(x)
+        x = norm(x)
 
         # Smear: mix previous token's embedding into current position (cheap bigram info)
         if kv_cache is None:
@@ -464,28 +483,28 @@ class GPT(nn.Module):
         for i, block in enumerate(self.transformer.h):
             x = self.resid_lambdas[i] * x + self.x0_lambdas[i] * x0
             ve = self.value_embeds[str(i)](idx).to(x.dtype) if str(i) in self.value_embeds else None
-            x = torch.utils.checkpoint.checkpoint(
-                block,
-                x, ve, self.rotary_embed, self.window_sizes[i], kv_cache,
-                use_reentrant=False
-            )
+            x = block(x, ve, self.rotary_embed, self.window_sizes[i], kv_cache)
+            #x, ve, cos_sin, self.window_sizes[i], kv_cache,
             if i == backout_layer:
                 x_backout = x
         # Subtract mid-layer residual to remove low-level features before logit projection
         if x_backout is not None:
             x = x - self.backout_lambda.to(x.dtype) * x_backout
-        x = self.norm(x)
+        x = norm(x)
 
         # Forward the lm_head (compute logits)
         softcap = 15 # smoothly cap the logits to the range [-softcap, softcap]
         logits = self.lm_head(x) # (B, T, padded_vocab_size) <- very big tensor, large amount of memory
         logits = logits[..., :self.config.vocab_size] # slice to remove padding
         logits = logits.float() # switch to fp32 for logit softcap and loss computation
+        
         logits = softcap * torch.tanh(logits / softcap) # squash the logits
 
         if targets is not None:
             # training: given the targets, compute and return the loss
             # TODO experiment with chunked cross-entropy?
+            if loss_reduction == 'mean' and not (targets != -1).any():
+                return logits.sum() * 0.0
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1, reduction=loss_reduction)
             return loss
         else:
