@@ -30,16 +30,16 @@ def _load_flash_attention_3():
         import os
         os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
         from kernels import get_kernel, has_kernel
-        # The varunneal kernel obtains better results for H100/Hopper
-        if major == 9:
-            hf_kernel = "varunneal/flash-attention-3"
+        # The community kernel seems to avoid certain numerical issues
+        #if major == 9:
+        #    hf_kernel = "varunneal/flash-attention-3"
+        #    return get_kernel(hf_kernel).flash_attn_interface
+        #else:
+        hf_kernel = "kernels-community/flash-attn3"
+        if has_kernel(hf_kernel):
             return get_kernel(hf_kernel).flash_attn_interface
         else:
-            hf_kernel = "kernels-community/flash-attn3"
-            if has_kernel(hf_kernel):
-                return get_kernel(hf_kernel).flash_attn_interface
-            else:
-                return None
+            return None
 
     except Exception:
         return None

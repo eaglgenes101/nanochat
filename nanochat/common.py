@@ -206,6 +206,7 @@ def compute_init(device_type="cuda"): # cuda|cpu|mps
     if is_ddp_requested and device_type == "cuda":
         device = torch.device("cuda", ddp_local_rank)
         torch.cuda.set_device(device)  # make "cuda" default to this device
+        # Using gloo as a hack to fit multiple processes on a gpu
         dist.init_process_group(backend="nccl", device_id=device)
         dist.barrier()
     else:

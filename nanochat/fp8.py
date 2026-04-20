@@ -128,13 +128,22 @@ class _Float8Matmul(torch.autograd.Function):
     The forward quantizes input and weight to FP8 and saves
     the quantized tensors + scales for backward.
     """
+    
+    generate_vmap_rule = True
 
     @staticmethod
-    def forward(ctx, input_2d, weight):
+    def setup_context(ctx, inputs, output):
         # Quantize both operands to e4m3 (higher precision format)
+        input_2d, weight = inputs
         input_fp8, input_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
         weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
         ctx.save_for_backward(input_fp8, input_inv, weight_fp8, weight_inv)
+
+    @staticmethod
+    def forward(input_2d, weight):
+        # Quantize both operands to e4m3 (higher precision format)
+        input_fp8, input_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
+        weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
 
         # output = input @ weight.T
         # input_fp8 is [B, K] contiguous = row-major (good for first arg)

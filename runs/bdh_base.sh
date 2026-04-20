@@ -10,13 +10,14 @@
 # screen -L -Logfile autorun.log -S autorun bash autorun.sh
 # 3) Example launch with wandb logging, but see below for setting up wandb first:
 # WANDB_RUN=autorun screen -L -Logfile autorun.log -S autorun bash autorun.sh
+printf "%s\n" "$@"
 
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-export CUDA_VISIBLE_DEVICES="0"
-export ROCR_VISIBLE_DEVICES="0"
-export WANDB_RUN="transformer_8layer_65536token_$(printf '%s' "$*" | md5sum | awk '{ print $1 }')"
+#export CUDA_VISIBLE_DEVICES="0"
+#export ROCR_VISIBLE_DEVICES="0"
+export WANDB_RUN="bdh_256embedding_65536token_$(printf '%s' "$*" | md5sum | awk '{ print $1 }')"
 mkdir -p $NANOCHAT_BASE_DIR
 
 # -----------------------------------------------------------------------------
@@ -25,7 +26,7 @@ mkdir -p $NANOCHAT_BASE_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/gpu_config_utils.sh"
 
-TORCH_FLAVOUR=rocm #$(detect_torch_flavour)
+TORCH_FLAVOUR=$(detect_torch_flavour)
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -84,8 +85,8 @@ python -m nanochat.report reset
 # each shard is ~100MB of text (compressed), so this is about ~800MB of data on disk
 python -m nanochat.dataset -n 8
 # Immediately also kick off downloading more shards in the background while tokenizer trains
-# See comment below for why 308 is the right number here
-python -m nanochat.dataset -n 308 &
+# See comment below for why 369 is the right number here
+python -m nanochat.dataset -n 369 &
 DATASET_DOWNLOAD_PID=$!
 # train the tokenizer with vocab size 2**16 = 65536 on ~2B characters of data
 python -m scripts.tok_train --max-chars=2000000000 --vocab-size=65536
@@ -95,13 +96,13 @@ python -m scripts.tok_eval
 # -----------------------------------------------------------------------------
 # Base model (pretraining)
 
-# The d12 model is 488M parameters.
-# Chinchilla says #tokens = 20X #params, so we need 488e6 * 20 = 9.76B tokens.
-# Assume our tokenizer is 4.8 chars/token, this is 9.76B * 4.8 ~= 46.8B chars.
-# At 250M chars/shard, this is 46.8B / 250M ~= 187 shards needed for pretraining.
-# Round up to 200 for safety. Also, the new DataLoader wastes about 35% of tokens to cropping
-# so 200 / (1 - 0.35) = 308 shards are needed.
-# At ~100MB/shard, this downloads ~30.8GB of data to disk.
+# The 2048 expansion model is 570M parameters.
+# Chinchilla says #tokens = 20X #params, so we need 570e6 * 20 = 11.40B tokens.
+# Assume our tokenizer is 4.8 chars/token, this is 11.40B * 4.8 ~= 54.7B chars.
+# At 250M chars/shard, this is 54.7B / 250M ~= 219 shards needed for pretraining.
+# Round up to 240 for safety. Also, the new DataLoader wastes about 35% of tokens to cropping
+# so 240 / (1 - 0.35) = 369 shards are needed.
+# At ~100MB/shard, this downloads ~36.9GB of data to disk.
 # (The total number of shards available in the entire dataset is 1822.)
 echo "Waiting for dataset download to complete..."
 wait $DATASET_DOWNLOAD_PID
@@ -112,14 +113,14 @@ set_backend_env_vars "$TORCH_FLAVOUR"
 
 mkdir -p $NANOCHAT_BASE_DIR/base_checkpoints # Issue that happened
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=6 --target-param-data-ratio=20 --device-batch-size=32 --run=$WANDB_RUN --fp8 \
-    --max-seq-len=1024 --eval-tokens=524288 --warmup-steps=200 --save-every=2000 --eval-every=500 --model-tag=$WANDB_RUN $@
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train_bdh -- --mlp-expansion=256 --target-param-data-ratio=20 --device-batch-size=8 --run=$WANDB_RUN --fp8 \
+    --max-seq-len=1024 --embedding-size=256 --eval-tokens=524288 --warmup-steps=200 --save-every=2000 --eval-every=500 --num-heads=4 --model-tag=$WANDB_RUN $@
 
-#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=4 --num-iterations=256 --device-batch-size=1 --run=$WANDB_RUN \
+#torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train_bdh -- --mlp-expansion=16 --num-iterations=256 --device-batch-size=1 --run=$WANDB_RUN \
 #    --max-seq-len=1024 --eval-tokens=524288 --warmup-steps=200 --save-every=2000 --eval-every=-1 --total-batch-size=1024 --core-metric-every=-1 --model-tag=$WANDB_RUN $@
     
 # evaluate the model on CORE tasks
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --model-tag=$WANDB_RUN
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_eval -- --model-type=bdh --model-tag=$WANDB_RUN
 
 # -----------------------------------------------------------------------------
 # Midtraining (teach the model conversation special tokens, tool use, multiple choice)

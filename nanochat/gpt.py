@@ -44,7 +44,7 @@ class GPTConfig:
 
 
 def norm(x):
-    return F.rms_norm(x, (x.size(-1),), eps=1e-6) # note that this will run in bf16, seems ok
+    return F.rms_norm(x, (x.size(-1),), eps=1e-5) # note that this will run in bf16, seems ok
 
 class Linear(nn.Linear):
     """nn.Linear that casts weights to match input dtype in forward.
@@ -146,7 +146,6 @@ class MLP(nn.Module):
         x = self.c_fc(x)
         x = sqrelu(x)
         x = self.c_proj(x)
-        torch.cuda.synchronize(device=None)
         return x
 
 
@@ -279,7 +278,7 @@ class GPT(nn.Module):
             base = 2 ** 18, 
             scale_base = 512,
             pos_idx_in_fp32 = True, 
-            device = self.lm_head.weight.device,
+            device = self.get_device(),
         )
 
         # Cast embeddings to COMPUTE_DTYPE: optimizer can tolerate reduced-precision

@@ -12,12 +12,12 @@ dependencies = [
     "rustbpe>=0.1.0",
     "tiktoken>=0.11.0",
     "tokenizers>=0.22.0",
-    "torch>=2.11.0",
     "transformers>=4.57.3",
     "uvicorn>=0.36.0",
     "wandb>=0.21.3",
     "flash-linear-attention>=0.4.2",
     "einops>=0.8.1",
+    "torch>=2.11",
 ]
 
 [dependency-groups]
@@ -39,17 +39,23 @@ python_functions = ["test_*"]
 # target torch to cuda 12.8, rocm6.4 or CPU
 [tool.uv.sources]
 torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-    { index = "pytorch-cu128", extra = "cuda" },
-    { index = "pytorch-cu128", extra = "gpu" },   # gpu is an alias for cuda
-    { index = "pytorch-rocm72", extra = "rocm" },
+    { index = "pytorch-cu128-nightly", extra = "cuda" },
+    { index = "pytorch-cu128-nightly", extra = "gpu" },   # gpu is an alias for cuda
+    { index = "pytorch-cpu-nightly", extra = "cpu" },
+    { index = "pytorch-rocm72-nightly", extra = "rocm" },
+]
+triton = [
+    { index = "pytorch-cu128-nightly", extra = "cuda" },
+    { index = "pytorch-cu128-nightly", extra = "gpu" },   # gpu is an alias for cuda
+    { index = "pytorch-cpu-nightly", extra = "cpu" },
+    { index = "pytorch-rocm72-nightly", extra = "rocm" },
 ]
 
 pytorch-triton-rocm = [
-    { index = "pytorch-nightly-rocm72", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-rocm72-nightly", extra = "rocm", marker = "sys_platform == 'linux'" },
 ]
 triton-rocm = [
-    { index = "pytorch-nightly-rocm72", extra = "rocm", marker = "sys_platform == 'linux'" },
+    { index = "pytorch-rocm72-nightly", extra = "rocm", marker = "sys_platform == 'linux'" },
 ]
 
 [[tool.uv.index]]
@@ -58,8 +64,18 @@ url = "https://download.pytorch.org/whl/rocm7.2"
 explicit = true
 
 [[tool.uv.index]]
-name = "pytorch-nightly-rocm72"
+name = "pytorch-rocm72-nightly"
 url = "https://download.pytorch.org/whl/nightly/rocm7.2"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu-nightly"
+url = "https://download.pytorch.org/whl/nightly/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu128"
 explicit = true
 
 [[tool.uv.index]]
@@ -71,13 +87,22 @@ explicit = true
 name = "pytorch-cu128"
 url = "https://download.pytorch.org/whl/cu128"
 explicit = true
-
-[project.optional-dependencies]
-cpu = ["torch>=2.11.0"]
-cuda = ["torch>=2.11.0"]
-gpu = ["torch>=2.11.0"] # gpu is an alias for cuda (backward compatibility)
 rocm = [
     "torch>=2.11.0",
+    "pytorch-triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+[project.optional-dependencies]
+cpu = ["torch>=2.11.0", "triton>=3.6.0"]
+cuda = ["torch>=2.11.0", "triton>=3.6.0"]
+gpu = [
+    "torch>=2.11.0",
+    "triton>=3.6.0",
+] # gpu is an alias for cuda (backward compatibility)
+rocm = [
+    "torch>=2.11.0",
+    "triton>=3.6.0",
     "pytorch-triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "triton-rocm>=3.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
@@ -92,3 +117,5 @@ conflicts = [
         { extra = "rocm" },
     ],
 ]
+environments = ['sys_platform=="linux"']
+prerelease = "allow"

@@ -38,6 +38,7 @@ from nanochat.core_eval import evaluate_task
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit
 from nanochat.loss_eval import evaluate_bpb
 from nanochat.engine import Engine
+from nanochat.bdh_engine import Engine as BDHEngine
 
 # -----------------------------------------------------------------------------
 # HuggingFace loading utilities
@@ -185,6 +186,7 @@ def main():
     parser.add_argument('--device-batch-size', type=int, default=32, help='Per-device batch size for BPB evaluation')
     parser.add_argument('--split-tokens', type=int, default=40*524288, help='Number of tokens to evaluate per split for BPB')
     parser.add_argument('--device-type', type=str, default='', help='cuda|cpu|mps (empty = autodetect)')
+    parser.add_argument('--model-type', type=str, default='gpt', help='gpt|bdh (empty = gpt)')
     args = parser.parse_args()
 
     # Parse evaluation modes
@@ -206,7 +208,7 @@ def main():
         model_name = args.hf_path
         model_slug = args.hf_path.replace("/", "-")
     else:
-        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step)
+        model, tokenizer, meta = load_model("base", device, phase="eval", model_tag=args.model_tag, step=args.step, model_type=args.model_type)
         sequence_len = meta["model_config"]["sequence_len"]
         token_bytes = get_token_bytes(device=device)
         model_name = f"base_model (step {meta['step']})"
@@ -236,7 +238,11 @@ def main():
                 "My favorite color is",
                 "If 5*x + 3 = 13, then x is",
             ]
-            engine = Engine(model, tokenizer)
+            if args.model_type == 'bdh':
+                engine = BDHEngine(model, tokenizer)
+            else:
+                engine = Engine(model, tokenizer)
+
             print0("\nConditioned samples:")
             for prompt in prompts:
                 tokens = tokenizer(prompt, prepend="<|bos|>")

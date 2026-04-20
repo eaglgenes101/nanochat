@@ -25,14 +25,14 @@ import wandb
 import torch
 import torch.distributed as dist
 
-from nanochat.gpt import GPT, GPTConfig, Linear
+from nanochat.gpt import Linear
+from nanochat.bdh import BDH, BDHConfig
 from nanochat.dataloader import tokenizing_distributed_data_loader_bos_bestfit, tokenizing_distributed_data_loader_with_state_bos_bestfit
 from nanochat.common import compute_init, compute_cleanup, print0, DummyWandb, print_banner, get_base_dir, autodetect_device_type, get_peak_flops, COMPUTE_DTYPE, COMPUTE_DTYPE_REASON, is_ddp_initialized
 from nanochat.tokenizer import get_tokenizer, get_token_bytes
 from nanochat.checkpoint_manager import save_checkpoint, load_checkpoint
 from nanochat.loss_eval import evaluate_bpb
-from nanochat.engine import Engine
-from nanochat.flash_attention import HAS_FA3, default_window_pattern
+from nanochat.bdh_engine import Engine
 from scripts.base_eval import evaluate_core
 print_banner()
 
@@ -48,11 +48,14 @@ parser.add_argument("--device-type", type=str, default="", help="cuda|cpu|mps (e
 parser.add_argument("--fp8", action="store_true", help="enable FP8 training (requires H100+ GPU and torchao)")
 parser.add_argument("--fp8-recipe", type=str, default="tensorwise", choices=["rowwise", "tensorwise"], help="FP8 scaling recipe: tensorwise (faster, recommended) or rowwise (more accurate but slower)")
 # Model architecture
-parser.add_argument("--depth", type=int, default=20, help="depth of the Transformer model")
-parser.add_argument("--aspect-ratio", type=int, default=64, help="model_dim = depth * aspect_ratio")
-parser.add_argument("--head-dim", type=int, default=128, help="target head dimension for attention")
+parser.add_argument("--mlp-expansion", type=int, default=256, help="expansion factor of intermediate sparse embeddings")
+parser.add_argument("--embedding-size", type=int, default=256, help="size of embeddings")
+parser.add_argument("--depth", type=int, default=8, help="depth of the BDH model")
+parser.add_argument("--num-heads", type=int, default=4, help="number of linear attention heads")
 parser.add_argument("--max-seq-len", type=int, default=2048, help="max context length")
-parser.add_argument("--window-pattern", type=str, default=default_window_pattern(), help="sliding window pattern tiled across layers: L=full, S=half context (e.g. 'SSL')")
+parser.add_argument("--add-gating", action=argparse.BooleanOptionalAction, default=True, help="add attention gating")
+parser.add_argument("--add-backout-lambda", action=argparse.BooleanOptionalAction, default=True, help="add mid-layer backout")
+parser.add_argument("--add-resids", action=argparse.BooleanOptionalAction, default=True, help="add embedding residual mixing")
 # Training horizon (only one used, in order of precedence)
 parser.add_argument("--num-iterations", type=int, default=-1, help="explicit number of optimization steps (-1 = disable)")
 parser.add_argument("--target-flops", type=float, default=-1.0, help="calculate num_iterations to reach target_flops (-1 = disable)")
@@ -100,21 +103,6 @@ print0(f"COMPUTE_DTYPE: {COMPUTE_DTYPE} ({COMPUTE_DTYPE_REASON})")
 use_dummy_wandb = args.run == "dummy" or not master_process
 wandb_run = DummyWandb() if use_dummy_wandb else wandb.init(project="nanochat", name=args.run, config=user_config)
 
-# Flash Attention status
-if HAS_FA3:
-    print0("✓ Using Flash Attention 3: efficient, new and awesome.")
-else:
-    print0("!" * 80)
-    if HAS_FA3 and COMPUTE_DTYPE != torch.bfloat16:
-        print0(f"WARNING: Flash Attention 3 only supports bf16, but COMPUTE_DTYPE={COMPUTE_DTYPE}. Using PyTorch SDPA fallback")
-    else:
-        print0("WARNING: Flash Attention 3 not available, using PyTorch SDPA fallback")
-    print0("WARNING: Training will be less efficient without FA3")
-    if args.window_pattern != "L":
-        print0(f"WARNING: SDPA has no support for sliding window attention (window_pattern='{args.window_pattern}'). Your GPU utilization will be terrible.")
-        print0("WARNING: Recommend using --window-pattern L for full context attention without alternating sliding window patterns.")
-    print0("!" * 80)
-
 # -----------------------------------------------------------------------------
 # Tokenizer will be useful for evaluation and also we need the vocab size to init the model
 tokenizer = get_tokenizer()
@@ -125,24 +113,20 @@ print0(f"Vocab size: {vocab_size:,}")
 # -----------------------------------------------------------------------------
 # Initialize the Model
 
-def build_model_meta(depth):
+def build_model_meta(embedding_size):
     """Build a model on meta device for a given depth (shapes/dtypes only, no data)."""
     # Model dim is nudged up to nearest multiple of head_dim for clean division
-    # (FA3 requires head_dim divisible by 8, and this guarantees head_dim == args.head_dim exactly)
-    base_dim = depth * args.aspect_ratio
-    model_dim = ((base_dim + args.head_dim - 1) // args.head_dim) * args.head_dim
-    num_heads = model_dim // args.head_dim
-    config = GPTConfig(
-        sequence_len=args.max_seq_len, vocab_size=vocab_size,
-        n_layer=depth, n_head=num_heads, n_kv_head=num_heads, n_embd=model_dim,
-        window_pattern=args.window_pattern,
+    config = BDHConfig(
+        sequence_len=args.max_seq_len, vocab_size=vocab_size, mlp_internal_dim_multiplier=args.mlp_expansion,
+        n_layer=args.depth, n_embd=embedding_size, n_head=args.num_heads, gate_divider=args.max_seq_len//2,
+        add_gating=args.add_gating, add_backout_lambda=args.add_backout_lambda, add_resids=args.add_resids
     )
     with torch.device("meta"):
-        model_meta = GPT(config)
+        model_meta = BDH(config)
     return model_meta
 
 # Build the model, move to device, init the weights
-model = build_model_meta(args.depth) # 1) Build on meta device (only shapes/dtypes, no data)
+model = build_model_meta(args.embedding_size) # 1) Build on meta device (only shapes/dtypes, no data)
 model_config = model.config
 model_config_kwargs = asdict(model_config)
 print0(f"Model config:\n{json.dumps(model_config_kwargs, indent=2)}")
@@ -156,7 +140,7 @@ checkpoint_dir = os.path.join(base_dir, "base_checkpoints", output_dirname)
 resuming = args.resume_from_step != -1
 if resuming:
     print0(f"Resuming optimization from step {args.resume_from_step}")
-    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank)
+    model_data, optimizer_data, meta_data = load_checkpoint(checkpoint_dir, args.resume_from_step, device, load_optimizer=True, rank=ddp_rank, model_type='bdh')
     model.load_state_dict(model_data, strict=True, assign=True)
     del model_data # free up this memory after the copy
 
@@ -262,14 +246,15 @@ print0(f"Estimated FLOPs per token: {num_flops_per_token:e}")
 def get_scaling_params(m):
     # As for which params to use exactly, transformer matrices + lm_head gives cleanest scaling laws (see dev/LOG.md Jan 27, 2026)
     params_counts = m.num_scaling_params()
-    scaling_params = params_counts['transformer_matrices'] + params_counts['lm_head']
+    scaling_params = params_counts['bdh_matrices'] + params_counts['lm_head']
     return scaling_params
 num_scaling_params = get_scaling_params(model)
 target_tokens = int(args.target_param_data_ratio * num_scaling_params) # optimal tokens for the model we are about to train
 
-# Our reference model is d12, this is where a lot of hyperparameters are tuned and then transfered to higher depths (muP style)
-d12_ref = build_model_meta(12) # creates the model on meta device
-D_REF = args.target_param_data_ratio * get_scaling_params(d12_ref) # compute-optimal d12 training horizon in tokens (measured empirically)
+# Our reference model is embedding size 256, which approximately corresponds to a d12 transformer
+embedding256_ref = build_model_meta(256) # creates the model on meta device
+# Using values borrowed from nanoGPT, since bdh says that it scales similarly
+D_REF = args.target_param_data_ratio * get_scaling_params(embedding256_ref) # compute-optimal d12 training horizon in tokens (measured empirically)
 B_REF = 2**19 # optimal batch size at d12 ~= 524,288 tokens (measured empirically)
 
 # 2) Now that we have the token horizon, we can calculate the optimal batch size
@@ -300,7 +285,7 @@ if batch_ratio != 1.0:
 # Note that these papers study AdamW, *not* Muon. We are blindly following AdamW theory for scaling hoping it ~works for Muon too.
 weight_decay_scaled = args.weight_decay * math.sqrt(total_batch_size / B_REF) * (D_REF / target_tokens)
 if weight_decay_scaled != args.weight_decay:
-    print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for depth {args.depth}")
+    print0(f"Scaling weight decay from {args.weight_decay:.6f} to {weight_decay_scaled:.6f} for embedding size {args.embedding_size}")
 
 # -----------------------------------------------------------------------------
 # Initialize the Optimizer (combined MuonAdamW: Muon for matrix params, AdamW for rest)
@@ -318,16 +303,19 @@ optimizer = model.setup_optimizer(
 #    for name, value in model.named_parameters():
 #        if not value.isfinite().all():
 #            print0(f"Found {value.isinf().count_nonzero()} inf and {value.isnan().count_nonzero()} NaN values in {name}")
-
-#optimizer.register_step_post_hook(check_value_embeds)
-
-#def check_value_embed_grads(opt, args, kwargs):
-#    for ve in model.value_embeds.values():
-#        if ve.weight.grad is not None and not ve.weight.grad.isfinite().all():
-#            print0(f"Replacing {ve.weight.grad.isinf().count_nonzero()} inf and {ve.weight.grad.isnan().count_nonzero()} NaN grads")
-#            ve.weight.grad = torch.nn.Parameter(ve.weight.grad.nan_to_num())
+#            with torch.no_grad():
+#                torch.nan_to_num_(value)
 #
-#optimizer.register_step_pre_hook(check_value_embed_grads)
+#model.register_forward_hook(check_value_embeds)
+
+def check_value_embed_grads(opt, args, kwargs):
+    for name, value in model.named_parameters():
+        if not value.grad.isfinite().all():
+            print0(f"Found {value.grad.isinf().count_nonzero()} inf and {value.grad.isnan().count_nonzero()} NaN values in {name}")
+            with torch.no_grad():
+                torch.nan_to_num_(value.grad)
+
+optimizer.register_step_pre_hook(check_value_embed_grads)
 
 if resuming:
     optimizer.load_state_dict(optimizer_data)
@@ -434,6 +422,9 @@ while True:
     # once in a while: evaluate the val bpb (all ranks participate)
     if args.eval_every > 0 and (last_step or step % args.eval_every == 0):
         model.eval()
+        #for name, value in model.named_parameters():
+        #    if not value.isfinite().all():
+        #        print0(f"Found {value.isinf().count_nonzero()} inf and {value.isnan().count_nonzero()} NaN values in {name}")
         val_loader = build_val_loader()
         eval_steps = args.eval_tokens // (args.device_batch_size * args.max_seq_len * ddp_world_size)
         with disable_fp8(model):
@@ -451,7 +442,6 @@ while True:
 
     # once in a while: estimate the CORE metric (all ranks participate)
     # use the original uncompiled model because the inputs keep changing shape
-    # disable FP8 for evaluation to use BF16 for more consistent/accurate results
     results = {}
     if args.core_metric_every > 0 and (last_step or (step > 0 and step % args.core_metric_every == 0)):
         model.eval()
