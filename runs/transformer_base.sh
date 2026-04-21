@@ -14,8 +14,8 @@
 # Default intermediate artifacts directory is in ~/.cache/nanochat
 export OMP_NUM_THREADS=1
 export NANOCHAT_BASE_DIR="$HOME/.cache/nanochat"
-export CUDA_VISIBLE_DEVICES="0"
-export ROCR_VISIBLE_DEVICES="0"
+#export CUDA_VISIBLE_DEVICES="0"
+#export ROCR_VISIBLE_DEVICES="0"
 export WANDB_RUN="transformer_8layer_65536token_$(printf '%s' "$*" | md5sum | awk '{ print $1 }')"
 mkdir -p $NANOCHAT_BASE_DIR
 
@@ -25,7 +25,7 @@ mkdir -p $NANOCHAT_BASE_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/gpu_config_utils.sh"
 
-TORCH_FLAVOUR=rocm #$(detect_torch_flavour)
+TORCH_FLAVOUR=$(detect_torch_flavour)
 
 # -----------------------------------------------------------------------------
 # Python venv setup with uv
@@ -112,7 +112,7 @@ set_backend_env_vars "$TORCH_FLAVOUR"
 
 mkdir -p $NANOCHAT_BASE_DIR/base_checkpoints # Issue that happened
 
-torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=6 --target-param-data-ratio=20 --device-batch-size=32 --run=$WANDB_RUN --fp8 \
+torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=4 --target-param-data-ratio=20 --device-batch-size=128 --run=$WANDB_RUN --fp8 \
     --max-seq-len=1024 --eval-tokens=524288 --warmup-steps=200 --save-every=2000 --eval-every=500 --model-tag=$WANDB_RUN $@
 
 #torchrun --standalone --nproc_per_node=$NPROC_PER_NODE -m scripts.base_train -- --depth=4 --num-iterations=256 --device-batch-size=1 --run=$WANDB_RUN \

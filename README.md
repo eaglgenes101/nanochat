@@ -7,6 +7,12 @@ nanochat is the simplest experimental harness for training LLMs. It is designed 
 
 For questions about the repo, I recommend either using [DeepWiki](https://deepwiki.com/karpathy/nanochat) from Devin/Cognition to ask questions about the repo, or use the [Discussions tab](https://github.com/karpathy/nanochat/discussions), or come by the [#nanochat](https://discord.com/channels/1020383067459821711/1427295580895314031) channel on Discord.
 
+## Additions from upstream Nanochat
+
+This fork of Nanochat implements the Baby Dragon Hatchling architecture, including some refinements, and adapts Nanochat to be able to train and evaluate such models. The files runs/bdh_base.sh and runs/transformer_base.sh are for side-by-side runs of the BDH and transformer architectures. In addition, ROCm support was merged from https://github.com/ykirpichev/nanochat/tree/01-18-auto_detect_torch_flavour_and_num_gpus, and kernels from flash-linear-attention were also incorporated into the transformer. 
+
+This is for my reproduction of https://arxiv.org/abs/2509.26507, specifically regarding BDH-GPU and its performance compared to Transformers, as part of the ECE 57000 (Machine Learning) project at Purdue University. 
+
 ## Time-to-GPT-2 Leaderboard
 
 Presently, the main focus of development is on tuning the pretraining stage, which takes the most amount of compute. Inspired by the modded-nanogpt repo and to incentivise progress and community collaboration, nanochat maintains a leaderboard for a "GPT-2 speedrun", which is the wall-clock time required to train a nanochat model to GPT-2 grade capability, as measured by the DCLM CORE score. The [runs/speedrun.sh](runs/speedrun.sh) script always reflects the reference way to train GPT-2 grade model and talk to it. The current leaderboard looks as follows:
